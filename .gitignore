@@ -1,0 +1,29 @@
+# Folders to exclude
+barlow_data/
+codes without metrics/
+data/
+datae/
+EuroSATallBands/
+__pycache__/
+resnet50_1/
+test_1/
+venv_ssl4eo/
+
+# Miniconda installer script
+Miniconda3-py310_23.11.0-2-Linux-x86_64.sh
+
+# Large model zip archive (306.0 MB)
+simsiam_resnet50_epoch_80_1.pth
+
+# Ignore common Python temporary/environment files
+*.pyc
+*.pyo
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+.vscode/
+
+# Operating System temporary files
+.DS_Store
+Thumbs.db
