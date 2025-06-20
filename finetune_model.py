@@ -1,5 +1,3 @@
-# --- finetune_model.py ---
-
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
@@ -10,6 +8,7 @@ from PIL import Image
 from tqdm import tqdm
 import pandas as pd
 import json
+import time # For tracking training time
 
 # Import your SimSiam model structure
 from simsiam_model import SimSiam
@@ -17,7 +16,7 @@ from simsiam_model import SimSiam
 # --- Configuration for Fine-tuning ---
 # IMPORTANT: Ensure this path points to your final pre-trained SimSiam backbone checkpoint.
 # This should be the .pth file from your train_simsiam.py output (e.g., epoch 200).
-PRETRAINED_CHECKPOINT_PATH = 'simsiam_resnet50_epoch_200.pth' 
+PRETRAINED_CHECKPOINT_PATH = 'simsiam_resnet50_epoch_90.pth' 
 
 NUM_CLASSES = 10 # EuroSAT has 10 land use/land cover classes
 FINETUNE_BATCH_SIZE = 32 # Can be adjusted, often smaller than linear eval for full fine-tuning
@@ -35,9 +34,9 @@ if DEVICE.type == 'cuda':
     print(f"CUDA device name: {torch.cuda.get_device_name(0)}")
 
 
-# --- 1. Custom Dataset for Labeled Data (Updated to read from CSV and JSON) ---
+# --- 1. Custom Dataset for Labeled Data ---
 class LabeledSatelliteDataset(Dataset):
-    def __init__(self, root_dir, csv_file, label_map_path, transform=None):
+    def __init__(self, root_dirBildschirmfoto zu 2025-06-20 17-38-14, csv_file, label_map_path, transform=None):
         self.root_dir = root_dir
         self.transform = transform
         
@@ -78,7 +77,7 @@ class LabeledSatelliteDataset(Dataset):
             
         return image, label
 
-# --- 2. Build the Fine-tuning Model (CRITICAL DIFFERENCE: Backbone is NOT Frozen) ---
+# --- 2. Build the Fine-tuning Model (CRITICAL DIFFERENCE TO lINEAR_EVALUATION: Backbone is NOT Frozen) ---
 class FineTuneModel(nn.Module):
     def __init__(self, pretrained_backbone, num_classes):
         super().__init__()
@@ -97,11 +96,17 @@ class FineTuneModel(nn.Module):
 
 # --- 3. Fine-tuning Pipeline ---
 def perform_fine_tuning():
-    # Lists to store metrics for plotting
-    train_losses = []
-    val_losses = []
-    train_accuracies = []
-    val_accuracies = []
+    # Initialize metrics dictionary and lists *before* the loop
+    # All metric lists are part of this dictionary
+    metrics = {
+        'train_losses': [],
+        'val_losses': [],
+        'train_accuracies': [],
+        'val_accuracies': [],
+        'best_val_accuracy': 0.0, # Track best val acc in metrics
+        'total_training_time_seconds': None, # Will be filled if run completes
+        'final_test_accuracy': None # Filled after test phase
+    }
 
     print("Loading pre-trained SimSiam backbone...")
     
@@ -149,7 +154,9 @@ def perform_fine_tuning():
     optimizer = torch.optim.Adam(model.parameters(), lr=FINETUNE_LEARNING_RATE) 
     
     print(f"\nStarting fine-tuning training for {NUM_FINETUNE_EPOCHS} epochs...")
-    best_val_accuracy = 0.0 
+    # Initialize local best_val_accuracy variable (distinct from metrics['best_val_accuracy'])
+    best_val_accuracy_current_run = 0.0 
+    start_time = time.time() # Record start time
 
     for epoch in range(NUM_FINETUNE_EPOCHS):
         model.train() 
@@ -204,36 +211,37 @@ def perform_fine_tuning():
         print(f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f} Acc: {train_accuracy*100:.2f}% | Val Loss: {avg_val_loss:.4f} Acc: {val_accuracy*100:.2f}%")
         
         # Store metrics for plotting
-        train_losses.append(avg_train_loss)
-        val_losses.append(avg_val_loss)
-        train_accuracies.append(train_accuracy)
-        val_accuracies.append(val_accuracy)
+        metrics['train_losses'].append(avg_train_loss)
+        metrics['val_losses'].append(avg_val_loss)
+        metrics['train_accuracies'].append(train_accuracy)
+        metrics['val_accuracies'].append(val_accuracy)
 
-        if val_accuracy > best_val_accuracy:
-            best_val_accuracy = val_accuracy
+        if val_accuracy > best_val_accuracy_current_run: # Use local variable for comparison
+            best_val_accuracy_current_run = val_accuracy 
+            metrics['best_val_accuracy'] = best_val_accuracy_current_run # Update in metrics dict
             torch.save(model.state_dict(), 'finetuned_eurosat_best_model.pth')
-            print(f"New best fine-tuned model saved with accuracy: {best_val_accuracy*100:.2f}%")
+            print(f"New best fine-tuned model saved with accuracy: {best_val_accuracy_current_run*100:.2f}%")
 
-    print("\nFine-tuning training complete!")
-    print(f"Best validation accuracy achieved during training: {best_val_accuracy*100:.2f}%")
+        # Save metrics after *each* epoch 
+        torch.save(metrics, 'finetune_metrics.pth') 
+
+    end_time = time.time() # Record end time
+    total_training_time = end_time - start_time # Calculate total time
+    print(f"\nFine-tuning training complete! Total training time: {total_training_time:.2f} seconds")
+
+    print(f"Best validation accuracy achieved during training: {best_val_accuracy_current_run*100:.2f}%")
     torch.save(model.state_dict(), 'finetuned_eurosat_final_model.pth')
     print("Final fine-tuned model saved as 'finetuned_eurosat_final_model.pth'")
 
-    # Save all collected metrics (before final test accuracy is known)
-    metrics = {
-        'train_losses': train_losses,
-        'val_losses': val_losses,
-        'train_accuracies': train_accuracies,
-        'val_accuracies': val_accuracies,
-        'best_val_accuracy': best_val_accuracy, 
-        'final_test_accuracy': None 
-    }
-    torch.save(metrics, 'finetune_metrics.pth')
-    print("Fine-tuning metrics saved to finetune_metrics.pth")
+    # Final save with total time 
+    metrics['total_training_time_seconds'] = total_training_time 
+    torch.save(metrics, 'finetune_metrics.pth') 
+    print("Fine-tuning metrics (final) saved to finetune_metrics.pth")
 
     # --- FINAL TEST PHASE ---
     print("\n--- Starting final evaluation on the test set ---")
     try:
+        # Load the best model based on validation accuracy for final testing
         model.load_state_dict(torch.load('finetuned_eurosat_best_model.pth', map_location=DEVICE))
         print("Loaded best model (based on validation accuracy) for final testing.")
     except FileNotFoundError:

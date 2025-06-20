@@ -1,5 +1,3 @@
-# --- Linear_evaluation.py ---
-
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
@@ -10,6 +8,7 @@ from PIL import Image
 from tqdm import tqdm
 import pandas as pd
 import json
+import time # For tracking training time
 
 # Import your SimSiam model structure
 from simsiam_model import SimSiam
@@ -17,7 +16,7 @@ from simsiam_model import SimSiam
 # --- Configuration for Linear Evaluation ---
 # IMPORTANT: Ensure this path points to your final pre-trained ResNet-50 checkpoint.
 # For example, if you trained for 200 epochs, it should be simsiam_resnet50_epoch_200.pth
-PRETRAINED_CHECKPOINT_PATH = 'simsiam_resnet50_epoch_200.pth' 
+PRETRAINED_CHECKPOINT_PATH = 'simsiam_resnet50_epoch_90.pth' 
 
 NUM_CLASSES = 10 # EuroSAT has 10 land use/land cover classes
 LINEAR_BATCH_SIZE = 64 
@@ -35,7 +34,7 @@ if DEVICE.type == 'cuda':
     print(f"CUDA device name: {torch.cuda.get_device_name(0)}")
 
 
-# --- 1. Custom Dataset for Labeled Data (Updated to read from CSV and JSON) ---
+# --- 1. Custom Dataset for Labeled Data ---
 class LabeledSatelliteDataset(Dataset):
     def __init__(self, root_dir, csv_file, label_map_path, transform=None):
         self.root_dir = root_dir
@@ -78,7 +77,7 @@ class LabeledSatelliteDataset(Dataset):
             
         return image, label
 
-# --- 2. Build the Linear Evaluation Model (No changes here) ---
+# --- 2. Build the Linear Evaluation Model ---
 class LinearClassifier(nn.Module):
     def __init__(self, pretrained_backbone, num_classes):
         super().__init__()
@@ -96,13 +95,19 @@ class LinearClassifier(nn.Module):
         output = self.classifier(features)
         return output
 
-# --- 3. Linear Evaluation Pipeline (Uses explicit Train/Val/Test Splits) ---
+# --- 3. Linear Evaluation Pipeline ---
 def perform_linear_evaluation():
-    # Lists to store metrics for plotting
-    train_losses = []
-    val_losses = []
-    train_accuracies = []
-    val_accuracies = []
+    # Initialize metrics dictionary and lists *before* the loop
+    # All metric lists are part of this dictionary
+    metrics = {
+        'train_losses': [],
+        'val_losses': [],
+        'train_accuracies': [],
+        'val_accuracies': [],
+        'best_val_accuracy': 0.0, # Track best val acc in metrics
+        'total_training_time_seconds': None, # Will be filled if run completes
+        'final_test_accuracy': None # Filled after test phase
+    }
 
     print("Loading pre-trained SimSiam backbone...")
     
@@ -118,13 +123,13 @@ def perform_linear_evaluation():
     print("Linear evaluation model created:")
     print(model)
     
-    # --- Data Preparation for EuroSAT (using provided CSV and JSON files) ---
+    # --- Data Preparation for EuroSAT  ---
     print("\nInitializing labeled datasets for linear evaluation using CSV splits...")
     
     eval_transform = transforms.Compose([
         transforms.Resize((224, 224)), 
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.425]) 
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) 
     ])
 
     label_map_path = os.path.join(LINEAR_EVAL_IMAGE_ROOT_DIR, 'label_map.json')
@@ -150,7 +155,9 @@ def perform_linear_evaluation():
     optimizer = torch.optim.Adam(model.classifier.parameters(), lr=LINEAR_LEARNING_RATE)
     
     print(f"\nStarting linear evaluation training for {NUM_LINEAR_EPOCHS} epochs...")
-    best_val_accuracy = 0.0 
+    # Initialize local best_val_accuracy variable (distinct from metrics['best_val_accuracy'])
+    best_val_accuracy_current_run = 0.0 
+    start_time = time.time() # Record start time
 
     for epoch in range(NUM_LINEAR_EPOCHS):
         model.train() 
@@ -205,36 +212,37 @@ def perform_linear_evaluation():
         print(f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f} Acc: {train_accuracy*100:.2f}% | Val Loss: {avg_val_loss:.4f} Acc: {val_accuracy*100:.2f}%")
         
         # Store metrics for plotting
-        train_losses.append(avg_train_loss)
-        val_losses.append(avg_val_loss)
-        train_accuracies.append(train_accuracy)
-        val_accuracies.append(val_accuracy)
+        metrics['train_losses'].append(avg_train_loss)
+        metrics['val_losses'].append(avg_val_loss)
+        metrics['train_accuracies'].append(train_accuracy)
+        metrics['val_accuracies'].append(val_accuracy)
 
-        if val_accuracy > best_val_accuracy:
-            best_val_accuracy = val_accuracy
+        if val_accuracy > best_val_accuracy_current_run: # Use local variable for comparison
+            best_val_accuracy_current_run = val_accuracy 
+            metrics['best_val_accuracy'] = best_val_accuracy_current_run # Update in metrics dict
             torch.save(model.state_dict(), 'linear_eval_eurosat_best_model.pth')
-            print(f"New best linear evaluation model saved with accuracy: {best_val_accuracy*100:.2f}%")
+            print(f"New best linear evaluation model saved with accuracy: {best_val_accuracy_current_run*100:.2f}%")
 
-    print("\nLinear evaluation training complete!")
-    print(f"Best validation accuracy achieved during training: {best_val_accuracy*100:.2f}%")
+        # Save metrics after *each* epoch 
+        torch.save(metrics, 'linear_eval_metrics.pth') 
+
+    end_time = time.time() # Record end time
+    total_training_time = end_time - start_time # Calculate total time
+    print(f"\nLinear evaluation training complete! Total training time: {total_training_time:.2f} seconds") 
+
+    print(f"Best validation accuracy achieved during training: {best_val_accuracy_current_run*100:.2f}%")
     torch.save(model.state_dict(), 'linear_eval_eurosat_final_model.pth')
     print("Final linear evaluation model saved as 'linear_eval_eurosat_final_model.pth'")
 
-    # Save all collected metrics (before final test accuracy is known)
-    metrics = {
-        'train_losses': train_losses,
-        'val_losses': val_losses,
-        'train_accuracies': train_accuracies,
-        'val_accuracies': val_accuracies,
-        'best_val_accuracy': best_val_accuracy, 
-        'final_test_accuracy': None 
-    }
-    torch.save(metrics, 'linear_eval_metrics.pth')
-    print("Linear evaluation metrics saved to linear_eval_metrics.pth")
+    # Final save with total time 
+    metrics['total_training_time_seconds'] = total_training_time 
+    torch.save(metrics, 'linear_eval_metrics.pth') 
+    print("Linear evaluation metrics (final) saved to linear_eval_metrics.pth")
 
     # --- FINAL TEST PHASE ---
     print("\n--- Starting final evaluation on the test set ---")
     try:
+        # Load the best model based on validation accuracy for final testing
         model.load_state_dict(torch.load('linear_eval_eurosat_best_model.pth', map_location=DEVICE))
         print("Loaded best model (based on validation accuracy) for final testing.")
     except FileNotFoundError:

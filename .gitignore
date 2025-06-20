@@ -1,29 +1,48 @@
-# Folders to exclude
-barlow_data/
-codes without metrics/
-data/
-datae/
-EuroSATallBands/
+# Gitignore for Deep Learning Project
+
+# --- Generated Files ---
+# Python bytecode
 __pycache__/
-resnet50_1/
-test_1/
-venv_ssl4eo/
-
-# Miniconda installer script
-Miniconda3-py310_23.11.0-2-Linux-x86_64.sh
-
-# Large model zip archive (306.0 MB)
-simsiam_resnet50_epoch_80_1.pth
-
-# Ignore common Python temporary/environment files
 *.pyc
 *.pyo
-__pycache__/
-.pytest_cache/
-.mypy_cache/
-.ipynb_checkpoints/
-.vscode/
+*.pyd
 
-# Operating System temporary files
-.DS_Store
-Thumbs.db
+# --- Large Data Directories ---
+# Exclude ALL contents of the pre-training converted PNGs directory
+barlow_data/
+
+# Exclude ALL contents of the main 'data' directory for raw datasets
+# This covers 'data/ssl4eo-s12/' and any zips like 'data/ssl4eo-s12_zips/'
+data/
+
+# Exclude all image files within 'datae/EuroSAT/' class subdirectories.
+# Explicitly re-include the crucial CSVs and JSON file for EuroSAT metadata.
+/datae/EuroSAT/*
+!/datae/EuroSAT/train.csv
+!/datae/EuroSAT/validation.csv
+!/datae/EuroSAT/test.csv
+!/datae/EuroSAT/label_map.json
+
+# --- Model Artifacts ---
+# Exclude all PyTorch model checkpoint files and metric logs.
+*.pth
+# If you have a specific directory named 'modelcheckpoints'
+modelcheckpoints/
+
+# Exclude plot outputs
+plots/
+
+# --- Environment Files ---
+# Virtual environment folders (Conda, venv, commonly named 'env')
+.conda/
+.venv/
+env/
+venv/
+
+# Jupyter Notebook Checkpoints (if you use notebooks)
+.ipynb_checkpoints/
+
+# --- IDE and OS Specific Files ---
+.DS_Store # macOS specific file
+.vscode/ # VS Code specific settings (Optional: remove if you want to share workspace settings)
+*.log # General log files

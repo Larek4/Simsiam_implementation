@@ -1,5 +1,3 @@
-# --- train_simsiam.py ---
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,14 +7,15 @@ import torchvision.models as models
 from tqdm import tqdm
 import os
 import math # For cosine annealing scheduler
+import time # For tracking training time
 
-# Import your custom dataset and model
+# Import the custom dataset and model
 from simsiam_data import SatelliteDataset, simsiam_transform_v1, simsiam_transform_v2
 from simsiam_model import SimSiam
 
 # --- Configuration for Training ---
 # Adjust these parameters as needed for your specific setup and desired training duration
-BATCH_SIZE = 32 # Recommended to start lower for ResNet-50 to avoid OOM
+BATCH_SIZE = 32 
 NUM_EPOCHS = 200 # Total epochs for pre-training
 LEARNING_RATE = 0.05 # Base learning rate for cosine schedule
 WEIGHT_DECAY = 1e-4 # Standard for SimSiam
@@ -67,9 +66,12 @@ def adjust_learning_rate(optimizer, base_lr, epoch, total_epochs, warmup_epochs,
 
 # --- 2. Training Setup ---
 def train_simsiam():
-    # Lists to store metrics for plotting
-    epoch_losses = []
-    epoch_learning_rates = []
+    # Initialize metrics dictionary and lists *before* the loop
+    metrics = {
+        'epoch_losses': [],
+        'epoch_learning_rates': [],
+        'total_training_time_seconds': None, # Will be filled if run completes
+    }
 
     print("Initializing dataset...")
     # Load your dataset with the two different transform pipelines
@@ -111,6 +113,8 @@ def train_simsiam():
 
     # --- Training Loop ---
     print(f"Starting training for {NUM_EPOCHS} epochs on {DEVICE}...")
+    start_time = time.time() # Record start time
+
     for epoch in range(NUM_EPOCHS):
         # Adjust learning rate for the current epoch
         current_lr = adjust_learning_rate(optimizer, LEARNING_RATE, epoch, NUM_EPOCHS, WARMUP_EPOCHS)
@@ -144,8 +148,11 @@ def train_simsiam():
         print(f"Epoch {epoch+1} finished. Average Loss: {avg_loss:.4f}")
 
         # Store metrics for plotting
-        epoch_losses.append(avg_loss)
-        epoch_learning_rates.append(current_lr)
+        metrics['epoch_losses'].append(avg_loss)
+        metrics['epoch_learning_rates'].append(current_lr)
+        
+        # Save metrics after *each* epoch
+        torch.save(metrics, 'pretrain_metrics.pth')
 
         # Optional: Save model checkpoint periodically
         if (epoch + 1) % 10 == 0 or epoch == NUM_EPOCHS - 1:
@@ -158,16 +165,16 @@ def train_simsiam():
             }, checkpoint_path)
             print(f"Model checkpoint saved to {checkpoint_path}")
     
-    print("\nTraining complete!")
+    end_time = time.time() # Record end time
+    total_training_time = end_time - start_time # Calculate total time
+    print(f"\nTraining complete! Total training time: {total_training_time:.2f} seconds") 
+    
     print(f"Final model saved to simsiam_resnet50_epoch_{NUM_EPOCHS}.pth")
 
-    # Save all collected metrics
-    metrics = {
-        'epoch_losses': epoch_losses,
-        'epoch_learning_rates': epoch_learning_rates,
-    }
+    # Final save with total time (overwrites previous)
+    metrics['total_training_time_seconds'] = total_training_time 
     torch.save(metrics, 'pretrain_metrics.pth')
-    print("Pre-training metrics saved to pretrain_metrics.pth")
+    print("Pre-training metrics (final) saved to pretrain_metrics.pth")
 
 
 if __name__ == "__main__":
